@@ -188,7 +188,7 @@ spec:
     branch: new # <-- This should be changed to `main`
   secretRef:
     name: flux-system
-  url: https://gitlab.tango.me/ops/applications-configurations.git
+  url: https://gitlab.com/gvfnix/gitops.git
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1beta2
 kind: Kustomization
