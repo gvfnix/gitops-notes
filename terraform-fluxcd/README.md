@@ -31,4 +31,76 @@ This note covers the case when the `main` branch in you repository is closed for
 
 ## Code
 
-... TODO ...
+**cluster.tf**
+```terraform
+locals {
+  project_id      = "gvfnix-1"
+  cluster_name    = "gvnix-1"
+  network_name    = "gvfnix-1"
+  subnetwork_name = "gke-1"
+  region          = "us-central-1"
+}
+data "google_client_config" "default" {}
+
+provider "kubernetes" {
+  host                   = "https://${module.gke.endpoint}"
+  token                  = data.google_client_config.default.access_token
+  cluster_ca_certificate = base64decode(module.gke.ca_certificate)
+}
+
+module "gke" {
+  source                     = "terraform-google-modules/kubernetes-engine/google"
+  project_id                 = local.project_id
+  name                       = local.cluster_name
+  region                     = local.region
+  network                    = local.network_name
+  subnetwork                 = local.subnetwork_name
+  ip_range_pods              = "${local.subnetwork_name}-pods"
+  ip_range_services          = "${local.subnetwork_name}-svc"
+  http_load_balancing        = false
+  horizontal_pod_autoscaling = false
+  network_policy             = false
+}
+```
+
+**fluxcd.tf**
+```terraform
+locals {
+  fluxcd_settings = {
+    hostname   = "gitlab.com"
+    branch     = "new"
+    token      = data.google_secret_manager_secret_version.fluxcd_gitlab_token.secret_data
+    owner      = "gvfnix"
+    repository = "gitops"
+    path       = "clusters/${local.cluster_name}/preprod"
+    personal   = true
+  }
+  flux_bootstrap_command = <<-EOT
+  gcloud container clusters get-credentials ${local.cluster_name} --region=${local.region}
+  flux bootstrap gitlab --token-auth \
+    --hostname=${local.fluxcd_settings.hostname} \
+    --owner=${local.fluxcd_settings.owner} --repository=${local.fluxcd_settings.repository} \
+    --branch=${local.fluxcd_settings.branch} --path=${local.fluxcd_settings.path} \
+    --personal=${local.fluxcd_settings.personal}
+  EOT
+}
+
+data "google_secret_manager_secret_version" "fluxcd_gitlab_token" {
+  secret  = "gitlab-token_api-developer_gvfnix-gitops"
+  project = local.project
+}
+
+resource "null_resource" "fluxcd_operators" {
+  provisioner "local-exec" {
+    command = local.flux_bootstrap_command
+    environment = {
+      GITLAB_TOKEN = local.fluxcd_settings.token
+    }
+  }
+  depends_on = [module.gke]
+  triggers = {
+    command = sha256(local.flux_bootstrap_command)
+    token   = local.fluxcd_settings.token
+  }
+}
+```
