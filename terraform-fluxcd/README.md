@@ -12,7 +12,7 @@ Flux generates a set of manifests with CRDs and other Kubernetes objects, includ
 Then it commits these manifests to the specified repository and applies them to the Kubernetes apiserver.
 
 The issue is that the most examples use `main` branch as the target to `flux bootstrap` command. Do you really push your code directly to `main`? Hardly so.
-This note covers the case when the `main` branch in you repository is closed for directo commits and can only apply merge requests. Also we assume that you do not want to create a separate repository and there is some code in the existing one.
+This note covers the case when the `main` branch in you repository is protected from direct commits and can only apply merge requests. Also we assume that you do not want to create a separate repository and there is some code in the existing one.
 
 ### Workflow
 
