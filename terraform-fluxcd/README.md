@@ -17,11 +17,13 @@ This note covers the case when the `main` branch in you repository is closed for
 ### Workflow
 
 1. Configure Flux to bootstrap on `new` branch of the existing repository.
-2. Rebase `new` branch on `main` branch.
-3. Call Terraform to invoke `flux bootstrap`.
-4. Add an application manifest at `new` branch.
-5. Create a merge request from `new` branch to `main` branch.
-6. Merge `new` branch into `main`.
+1. Rebase `new` branch on `main` branch.
+1. Add an application manifest at `new` branch.
+1. Commit the changes.
+1. Wait for Flux Kustomization controller to apply the changes (typically 10-30 seconds).
+1. Change file `gotk-sync.yaml` so that `source.toolkit.fluxcd.io/v1beta1/GitRepository[flux-system/flux-system]` had `spec.ref.branch == main`.
+1. Create a merge request from `new` branch to `main` branch.
+1. Merge `new` branch into `main`.
 
 ## Tools used
 
@@ -30,6 +32,8 @@ This note covers the case when the `main` branch in you repository is closed for
 * [Flux CLI](https://fluxcd.io/docs/cmd/) as a tool for bootstrapping the repository. There is also [terraform provider for fluxcd](https://github.com/fluxcd/terraform-provider-flux), though it does not look like something convenient.
 
 ## Code
+
+### Step 1. Bootstrap Flux on `new` branch.
 
 **cluster.tf**
 ```terraform
@@ -104,3 +108,110 @@ resource "null_resource" "fluxcd_operators" {
   }
 }
 ```
+
+When we call `terraform plan` and then `terrraform apply`, it will create the cluster and commit three files to the repository at `clusters/gvfnix-1/preprod/flux-system` directory. These files are:
+
+* `gotk-components.yaml` - CRDs and controllers. This file should hardly ever change.
+* `gotk-sync.yaml` - custom resources that specify the target repository. We will change it later.
+* `kustomization.yaml`
+
+### Step 2. Rebase `new` to `main`.
+
+```bash
+git clone https://gitlab.com/gvfnix/gitops.git
+cd gitops
+git checkout new
+git rebase main
+git push -u origin HEAD
+```
+
+### Step 3. Add manifests for `sealed-secrets` helm release.
+```bash
+mkdir -p ./clusters/gvfnix-1/apps/base/sealed-secrets
+cat << 'EOF' > ./clusters/gvfnix-1/apps/base/sealed-secrets/kustomization.yml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kube-system
+resources: [resources.yml]
+EOF
+
+cat << 'EOF' > ./clusters/gvfnix-1/apps/base/sealed-secrets/resources.yml
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta1
+kind: HelmRepository
+metadata:
+  name: sealed-secrets-controller
+spec:
+  interval: 1h
+  url: https://bitnami-labs.github.io/sealed-secrets
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: sealed-secrets-controller
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: sealed-secrets
+      version: "2.1.3"
+      sourceRef:
+        kind: HelmRepository
+        name: sealed-secrets-controller
+      interval: 5m
+---
+EOF
+
+cat << 'EOF' > ./clusters/gvfnix-1/preprod/apps/kustomization.yml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/base/sealed-secrets
+EOF
+
+git add . && git commit -m "Add sealed-secrets helm release"
+```
+
+### Step 3. Change Flux target branch to `main`.
+
+**./clusters/gvfnix-1/preprod/flux-system/gotk-sync.yaml**
+```yaml
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 1m0s
+  ref:
+    branch: new # <-- This should be changed to `main`
+  secretRef:
+    name: flux-system
+  url: https://gitlab.tango.me/ops/applications-configurations.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1beta2
+kind: Kustomization
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 10m0s
+  path: ./clusters/dbops/preprod
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+```
+
+```bash
+git commit -am "Change fluxcd manifests to pull the changes from 'main' branch"
+git push
+```
+
+After this step Flux's source controller will be aimed to `main` branch. It will fail to pull the changes as the files you have in `new` branch do not yet exist in `main`.
+
+### Step 4. Merge your `new` branch into `main`.
+
+### Step 5. Change your `fluxcd.tf` file to use `main` branch as a bootstrapped one.
