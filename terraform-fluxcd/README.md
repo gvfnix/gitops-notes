@@ -197,7 +197,7 @@ metadata:
   namespace: flux-system
 spec:
   interval: 10m0s
-  path: ./clusters/dbops/preprod
+  path: ./clusters/gvfnix-1/preprod
   prune: true
   sourceRef:
     kind: GitRepository
